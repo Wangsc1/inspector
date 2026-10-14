@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.2.0
+// @version      2.3.0
 // @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -51,6 +51,38 @@
     document.dispatchEvent(new CustomEvent('__nd_cookie_res', { detail: JSON.stringify(out) }));
   });
 
+
+  // ===== 设置页汉化：Eruda 3.4.3 没有语言选项，文案是源码字面量，加载前按精确上下文替换（替换不到则跳过，不影响功能）=====
+  var ZH = [
+    [',"rememberPos","Remember Entry Button Position")', ',"rememberPos","记住入口按钮位置")'],
+    ['.range(n,"transparency","Transparency"', '.range(n,"transparency","透明度"'],
+    ['.range(n,"displaySize","Display Size"', '.range(n,"displaySize","显示大小"'],
+    ['e.button("Restore defaults and reload"', 'e.button("恢复默认设置并重新加载"'],
+    ['.select(n,"theme","Theme"', '.select(n,"theme","主题"'],
+    ['.switch(n,"asyncRender","Asynchronous Rendering")', '.switch(n,"asyncRender","异步渲染")'],
+    ['.switch(n,"jsExecution","Enable JavaScript Execution")', '.switch(n,"jsExecution","允许执行 JavaScript")'],
+    ['.switch(n,"catchGlobalErr","Catch Global Errors")', '.switch(n,"catchGlobalErr","捕获全局错误")'],
+    ['.switch(n,"overrideConsole","Override Console")', '.switch(n,"overrideConsole","接管 Console")'],
+    ['.switch(n,"displayIfErr","Auto Display If Error Occurs")', '.switch(n,"displayIfErr","出错时自动显示面板")'],
+    ['.switch(n,"displayExtraInfo","Display Extra Information")', '.switch(n,"displayExtraInfo","显示额外信息")'],
+    ['.switch(n,"displayUnenumerable","Display Unenumerable Properties")', '.switch(n,"displayUnenumerable","显示不可枚举属性")'],
+    ['.switch(n,"displayGetterVal","Access Getter Value")', '.switch(n,"displayGetterVal","读取 Getter 的值")'],
+    ['.switch(n,"lazyEvaluation","Lazy Evaluation")', '.switch(n,"lazyEvaluation","延迟求值")'],
+    ['.select(n,"maxLogNum","Max Log Number"', '.select(n,"maxLogNum","最大日志条数"'],
+    ['.text("Elements").switch(t,"overrideEventTarget","Catch Event Listeners")', '.text("Elements").switch(t,"overrideEventTarget","捕获事件监听器")'],
+    ['.switch(t,"observeElement","Auto Refresh Elements")', '.switch(t,"observeElement","自动刷新元素")'],
+    ['.switch(t,"hideErudaSetting","Hide Eruda Setting")', '.switch(t,"hideErudaSetting","隐藏 Eruda 自身设置")'],
+    ['.switch(t,"showLineNum","Show Line Numbers")', '.switch(t,"showLineNum","显示行号")']
+  ];
+  function zhSrc(code) {
+    var miss = [];
+    ZH.forEach(function (p) {
+      if (code.indexOf(p[0]) >= 0) code = code.split(p[0]).join(p[1]); else miss.push(p[0]);
+    });
+    // 主题默认值 "System preference" 既是选项文案也是配置值，不动它，下面单独在运行时汉化显示
+    return { code: code, miss: miss };
+  }
+
   var src;
   try {
     src = await GM.getResourceText('eruda');
@@ -60,7 +92,10 @@
     return;
   }
 
-  // 定义 window.eruda
+  // 汉化后再定义 window.eruda
+  var zr = zhSrc(src);
+  src = zr.code;
+  de.setAttribute('data-nd-zh-miss', String(zr.miss.length));
   inPage(src);
 
 
@@ -156,6 +191,35 @@
     });
   }
 
+
+  // 设置页里分区标题 / 下拉选项是“配置值”，不能改源码字符串；渲染后只改显示文字（textContent），不碰 value
+  var ZH_TEXT = { 'Console': '控制台', 'Elements': '元素', 'Resources': '资源', 'Sources': '源码',
+    'System preference': '跟随系统', 'Light': '浅色', 'Dark': '深色', 'infinite': '不限制' };
+  function zhRuntime() {
+    var host = document.getElementById('eruda');
+    var root = host && (host.shadowRoot || host);
+    if (!root) return;
+    // 设置页由 luna-setting 组件渲染；只在其内部、且只改文字与映射表完全相等的叶子节点，不碰日志和页面内容
+    root.querySelectorAll('.luna-setting').forEach(function (scope) {
+      scope.querySelectorAll('*').forEach(function (n) {
+        if (n.children.length !== 0) return;
+        var t = (n.textContent || '').trim();
+        if (ZH_TEXT.hasOwnProperty(t)) n.textContent = ZH_TEXT[t];
+      });
+    });
+  }
+  function watchZh() {
+    var host = document.getElementById('eruda');
+    var root = host && (host.shadowRoot || host);
+    if (!root) return;
+    var busy = false;
+    new MutationObserver(function () {
+      if (busy) return; busy = true;
+      setTimeout(function () { busy = false; try { zhRuntime(); } catch (e) {} }, 60);
+    }).observe(root, { childList: true, subtree: true });
+    zhRuntime();
+  }
+
   var inited = false;
   function initEruda() {
     if (inited) return;
@@ -165,6 +229,7 @@
     var err = de.getAttribute('data-nd-err');
     if (err) { toast('开发者工具启动失败: ' + err); return; }
     if (!document.getElementById('eruda')) toast('开发者工具未能显示（页面 CSP 可能拦截了内联脚本）');
+    else watchZh();
   }
 
   // body 一出现就初始化，尽量抓到早期请求
