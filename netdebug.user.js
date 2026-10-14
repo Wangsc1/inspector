@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.8.0
+// @version      2.8.1
 // @description  Safari 轻量开发者工具（不等同 Chrome DevTools）：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -188,13 +188,18 @@
         Tool.prototype.init.call(this, $el);
         var root = $el.get(0);
         var self = this;
-        root.style.cssText = 'padding:8px;overflow:auto;font-size:13px;color:#333';
+        root.classList.add('nd-cookie-tool');
+        var themeStyle = document.createElement('style');
+        themeStyle.textContent = '.eruda-container .nd-cookie-tool{--foreground:#333;--background:#fff;--darker-background:#e8e8e8;--border:#ccc;--link-color:#0a58ca}.eruda-container.eruda-dark .nd-cookie-tool{--foreground:#e5e5e5;--background:#242424;--darker-background:#333;--border:#555;--link-color:#8ab4f8}';
+        root.getRootNode().appendChild(themeStyle);
+        this._themeStyle = themeStyle;
+        root.style.cssText = 'padding:8px;overflow:auto;font-size:13px;color:var(--foreground,#333)';
         function mk(tag, css, txt) { var d = document.createElement(tag); if (css) d.style.cssText = css; if (txt != null) d.textContent = txt; return d; }
         function btn(txt, fn) {
-          var b = mk('button', 'background:#e8e8e8;color:#222;border:1px solid #bbb;border-radius:6px;padding:6px 10px;margin:2px 4px 2px 0;font-size:13px', txt);
+          var b = mk('button', 'background:var(--darker-background,#e8e8e8);color:var(--foreground,#222);border:1px solid var(--border,#bbb);border-radius:6px;padding:6px 10px;margin:2px 4px 2px 0;font-size:13px', txt);
           b.onclick = fn; return b;
         }
-        var msg = mk('div', 'color:#666;margin:4px 0;word-break:break-all');
+        var msg = mk('div', 'color:var(--foreground,#666);margin:4px 0;word-break:break-all');
         var tools = mk('div', 'margin-bottom:6px');
         var list = mk('div');
         function flash(t) { msg.textContent = t; }
@@ -205,20 +210,20 @@
           if (res.ok) flash('共 ' + cs.length + ' 条：GM.cookie ' + res.gm + ' 条' + (res.extra ? ' + document.cookie 补充 ' + res.extra + ' 条' : '') + '（Safari 接口可能漏读会话 Cookie）');
           else flash('主查询失败：' + res.error + '；已显示补查及网页可见结果，共 ' + cs.length + ' 条');
           var cfMsg = res.cfFound ? 'cf_clearance：已找到' : (res.cfErrors && res.cfErrors.length ? 'cf_clearance：未找到，部分查询失败（无法确认是否存在）' : 'cf_clearance：当前接口查询未找到（可能未生成或接口未返回）');
-          list.appendChild(mk('div', 'margin:6px 0;padding:8px;border:1px solid #bbb;border-radius:6px;word-break:break-all', cfMsg));
+          list.appendChild(mk('div', 'margin:6px 0;padding:8px;border:1px solid var(--border,#bbb);border-radius:6px;word-break:break-all', cfMsg));
           cur = cs;
-          if (!cs.length) { list.appendChild(mk('div', 'color:#999;padding:12px 0', '(无 Cookie)')); return; }
+          if (!cs.length) { list.appendChild(mk('div', 'color:var(--foreground,#999);padding:12px 0', '(无 Cookie)')); return; }
           cs.forEach(function (c) {
-            var box = mk('div', 'border:1px solid #ccc;border-radius:6px;padding:8px;margin:6px 0;background:#fff');
+            var box = mk('div', 'border:1px solid var(--border,#ccc);border-radius:6px;padding:8px;margin:6px 0;background:var(--background,#fff)');
             box.appendChild(mk('div', 'font-weight:600;word-break:break-all', c.name));
-            box.appendChild(mk('div', 'font-family:Menlo,monospace;word-break:break-all;margin:4px 0;color:#0a58ca', String(c.value)));
+            box.appendChild(mk('div', 'font-family:Menlo,monospace;word-break:break-all;margin:4px 0;color:var(--link-color,#0a58ca)', String(c.value)));
             var attrs = [];
             Object.keys(c).forEach(function (k) {
               if (k === 'name' || k === 'value') return;
               var v = c[k];
               if (v === true) attrs.push(k); else if (v === false || v == null || v === '') return; else attrs.push(k + '=' + v);
             });
-            if (attrs.length) box.appendChild(mk('div', 'color:#777;font-size:12px;word-break:break-all', attrs.join(' | ')));
+            if (attrs.length) box.appendChild(mk('div', 'color:var(--foreground,#777);font-size:12px;word-break:break-all', attrs.join(' | ')));
             box.appendChild(btn('复制 name=value', function () { doCopy(c.name + '=' + c.value); }));
             box.appendChild(btn('仅复制值', function () { doCopy(String(c.value)); }));
             list.appendChild(box);
@@ -242,11 +247,11 @@
           var u = location.href;
           var link = 'scripting://run/' + 'CookieReader' + '?url=' + encodeURIComponent(u);
           flash('正在跳转到 Scripting 的「CookieReader」（需先安装该脚本，脚本名必须是 CookieReader）。若没反应，点下方链接。');
-          var a = mk('a', 'display:block;margin:8px 0;color:#0a58ca;word-break:break-all;font-size:12px', link);
+          var a = mk('a', 'display:block;margin:8px 0;color:var(--link-color,#0a58ca);word-break:break-all;font-size:12px', link);
           a.href = link;
           list.innerHTML = '';
           list.appendChild(a);
-          list.appendChild(mk('div', 'color:#666;font-size:12px;margin-top:6px', '提示：App WebView 与 Safari 登录状态独立。首次需在 App 登录，以后可复用仍有效的 WebView 会话。'));
+          list.appendChild(mk('div', 'color:var(--foreground,#666);font-size:12px;margin-top:6px', '提示：App WebView 与 Safari 登录状态独立。首次需在 App 登录，以后可复用仍有效的 WebView 会话。'));
           try { location.href = link; } catch (e) {}
         }));
         root.appendChild(tools); root.appendChild(msg); root.appendChild(list);
@@ -254,7 +259,7 @@
       };
       Cookies.prototype.show = function () { Tool.prototype.show.call(this); if (this._load) this._load(); return this; };
       Cookies.prototype.hide = function () { Tool.prototype.hide.call(this); return this; };
-      Cookies.prototype.destroy = function () { Tool.prototype.destroy.call(this); };
+      Cookies.prototype.destroy = function () { if (this._themeStyle) this._themeStyle.remove(); Tool.prototype.destroy.call(this); };
       return new Cookies();
     });
   }
