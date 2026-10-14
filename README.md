@@ -2,7 +2,7 @@
 
 在 Safari 中使用的完整开发者工具用户脚本（基于 [Eruda](https://github.com/liriliri/eruda)），在 [Scripting](https://apps.apple.com/app/apple-store/id6479691128) 的 Safari Browser Scripts 中运行。
 
-提供 Elements / Console / Network / Resources / Sources / Info / Snippets 面板。
+提供 Elements / Console / Network / Resources / Sources / Info 面板，另加一个 Cookies 面板：通过 Scripting 的 GM.cookie 读取全部 Cookie（包括网页 JS 读不到的 HttpOnly），支持逐条或整体复制。
 
 ## 安装
 在 Scripting 的 Safari 扩展弹窗中选择从 URL 安装：
