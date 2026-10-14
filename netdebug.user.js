@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.8.1
+// @version      2.9.0
 // @description  Safari 轻量开发者工具（不等同 Chrome DevTools）：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -297,6 +297,24 @@
     zhRuntime();
   }
 
+  function enableTextCopy() {
+    var host = document.getElementById('eruda');
+    var root = host && (host.shadowRoot || host);
+    if (!root || root.querySelector('[data-nd-text-copy]')) return;
+    var style = document.createElement('style');
+    style.setAttribute('data-nd-text-copy', '1');
+    style.textContent = '.eruda-container .eruda-dev-tools,.eruda-container .eruda-dev-tools *{-webkit-user-select:text!important;user-select:text!important;-webkit-touch-callout:default!important}' +
+      '.eruda-container .eruda-tab,.eruda-container .eruda-tab *,.eruda-container .eruda-dev-tools button,.eruda-container .eruda-dev-tools button *,.eruda-container .eruda-dev-tools select,.eruda-container .eruda-dev-tools input[type=range],.eruda-container .eruda-dev-tools input[type=checkbox],.eruda-container .eruda-dev-tools input[type=radio],.eruda-container .eruda-dev-tools [role=button],.eruda-container .eruda-dev-tools [role=button] *,.eruda-container .eruda-dev-tools [role=slider],.eruda-container .eruda-dev-tools [class*=icon],.eruda-container .eruda-resizer{-webkit-user-select:none!important;user-select:none!important}' ;
+    root.appendChild(style);
+    // Eruda 拦截 contextmenu 会阻止 iOS 原生复制菜单；只在面板的非控件文字区阻断该拦截，不 preventDefault。
+    root.addEventListener('contextmenu', function (ev) {
+      var t = ev.target;
+      if (!t || !t.closest || !t.closest('.eruda-dev-tools')) return;
+      if (t.closest('button,input,textarea,select,[contenteditable=true],[role=button],[role=slider],.eruda-tab,.eruda-resizer')) return;
+      ev.stopPropagation();
+    }, true);
+  }
+
   var inited = false;
   function initEruda() {
     if (inited) return;
@@ -306,7 +324,7 @@
     var err = de.getAttribute('data-nd-err');
     if (err) { toast('开发者工具启动失败: ' + err); return; }
     if (!document.getElementById('eruda')) toast('开发者工具未能显示（页面 CSP 可能拦截了内联脚本）');
-    else { inited = true; watchZh(); }
+    else { inited = true; watchZh(); enableTextCopy(); }
   }
 
   // Eruda 的容器使用 documentElement，资源准备好后即可初始化
