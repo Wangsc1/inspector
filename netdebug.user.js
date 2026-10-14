@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网络调试面板
 // @namespace    openbear.netdebug
-// @version      1.0.1
+// @version      1.0.2
 // @description  Safari 网络调试：抓取 fetch/XHR/WebSocket/资源错误，GM 无跨域探测、出口信息、Cookie 查看、日志复制与保存
 // @match        *://*/*
 // @run-at       document-start
@@ -242,13 +242,32 @@
     else upd(e, 'ERR', r.err);
   }
   async function cookieInfo() {
-    var e = add('info', 'Cookie 列表', '', '…');
-    try {
-      var cs = await GM.cookie.list({ url: location.href });
-      upd(e, cs.length, cs.map(function (c) {
-        return c.name + ' | domain=' + c.domain + ' path=' + c.path + (c.secure ? ' secure' : '') + (c.httpOnly ? ' httpOnly' : '') + (c.sameSite ? ' ' + c.sameSite : '') + ' | 值长度=' + (c.value || '').length;
-      }).join('\n') || '(无)');
-    } catch (er) { upd(e, 'ERR', String(er && er.message || er)); }
+    var e = add('cookie', 'Cookie 列表', '', '…');
+    var cs = null, note = '';
+    try { cs = await GM.cookie.list({ url: location.href }); }
+    catch (er) {
+      note = 'GM.cookie 失败(' + (er && er.message || er) + ')，降级为 document.cookie，不含 HttpOnly\n';
+      cs = document.cookie ? document.cookie.split(/;\s*/).map(function (p) {
+        var i = p.indexOf('='); return { name: p.slice(0, i), value: p.slice(i + 1) };
+      }) : [];
+    }
+    var header = cs.map(function (c) { return c.name + '=' + c.value; }).join('; ');
+    var detail = note + cs.map(function (c, i) {
+      var attrs = [];
+      if (c.domain) attrs.push('domain=' + c.domain);
+      if (c.path) attrs.push('path=' + c.path);
+      if (c.secure) attrs.push('Secure');
+      if (c.httpOnly) attrs.push('HttpOnly');
+      if (c.sameSite) attrs.push('SameSite=' + c.sameSite);
+      if (c.expirationDate) attrs.push('expires=' + new Date(c.expirationDate * 1000).toISOString());
+      else if (c.session) attrs.push('session');
+      return (i + 1) + '. ' + c.name + ' = ' + c.value + (attrs.length ? '\n    ' + attrs.join(' | ') : '');
+    }).join('\n') || '(无)';
+    e.actions = [
+      { label: '复制全部(请求头格式)', text: header },
+      { label: '复制JSON', text: JSON.stringify(cs, null, 2) }
+    ].concat(cs.map(function (c) { return { label: '复制 ' + c.name, text: c.name + '=' + c.value }; }));
+    upd(e, cs.length + ' 条', detail);
   }
 
   function runCode(code) {
@@ -268,10 +287,11 @@
     return envInfo() + '\n\n--- 最慢资源 ---\n' + slowRes() + '\n\n--- 日志 ---\n' +
       logs.map(function (e) { return '[' + e.time + '] ' + e.type + ' ' + e.status + ' ' + e.title + (e.detail ? '\n    ' + e.detail.replace(/\n/g, '\n    ') : ''); }).join('\n');
   }
-  async function copyAll() {
-    try { await GM.setClipboard(textOf()); toast('已复制'); }
-    catch (e) { try { await navigator.clipboard.writeText(textOf()); toast('已复制'); } catch (e2) { toast('复制失败'); } }
+  async function copyText(t) {
+    try { await GM.setClipboard(t); toast('已复制'); }
+    catch (e) { try { await navigator.clipboard.writeText(t); toast('已复制'); } catch (e2) { toast('复制失败'); } }
   }
+  function copyAll() { return copyText(textOf()); }
   async function saveAll() {
     try {
       var fm = Scripting.FileManager;
@@ -308,6 +328,13 @@
       .slice().reverse().slice(0, 300).forEach(function (e) {
         var row = el('div', 'padding:6px 8px;border-bottom:1px solid #333;font:12px Menlo,monospace;word-break:break-all;white-space:pre-wrap;color:' + color(e));
         row.textContent = '[' + e.time + '] ' + e.type + ' ' + e.status + '  ' + e.title + (e.detail ? '\n' + e.detail : '');
+        if (e.actions && e.actions.length) {
+          var ab = el('div', 'margin-top:6px;white-space:normal');
+          e.actions.forEach(function (a) {
+            ab.appendChild(btn(a.label, function () { copyText(a.text); }));
+          });
+          row.appendChild(ab);
+        }
         listEl.appendChild(row);
       });
   }
@@ -325,14 +352,14 @@
     panel = el('div', 'display:none;position:fixed;left:0;right:0;bottom:0;height:62vh;z-index:2147483647;background:#1c1c1e;color:#eee;font-family:-apple-system;border-top:1px solid #444;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)');
     panel.id = '__nd_panel';
     var bar = el('div', 'padding:4px;flex:none;overflow-x:auto;white-space:nowrap');
-    ['all', 'fetch', 'xhr', 'ws', 'err', 'console', 'test', 'res'].forEach(function (f) { bar.appendChild(btn(f, function () { filter = f; render(); })); });
+    ['all', 'fetch', 'xhr', 'ws', 'err', 'console', 'cookie', 'test', 'res'].forEach(function (f) { bar.appendChild(btn(f, function () { filter = f; render(); })); });
     var bar2 = el('div', 'padding:0 4px 4px;flex:none;overflow-x:auto;white-space:nowrap');
     bar2.appendChild(btn('环境', function () { add('info', '环境信息', envInfo()); }));
     bar2.appendChild(btn('慢资源', function () { add('info', '最慢资源 Top15', slowRes()); }));
     bar2.appendChild(btn('出口', traceInfo));
     bar2.appendChild(btn('探测', function () { var u = ask('探测 URL（GM 请求，无跨域限制）', location.origin + '/'); if (u) probe(u); }));
     bar2.appendChild(btn('HEAD', function () { var u = ask('HEAD 探测 URL', location.href); if (u) probe(u, 'HEAD'); }));
-    bar2.appendChild(btn('Cookie', cookieInfo));
+    bar2.appendChild(btn('Cookie', function () { filter = 'cookie'; cookieInfo(); }));
     bar2.appendChild(btn('复制', copyAll));
     bar2.appendChild(btn('保存', saveAll));
     bar2.appendChild(btn('清空', function () { logs = []; byId = {}; badge.textContent = 0; render(); }));
