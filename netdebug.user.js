@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.7.0
+// @version      2.8.0
 // @description  Safari 轻量开发者工具（不等同 Chrome DevTools）：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -47,11 +47,45 @@
 
   // ===== Cookie 桥接：GM.cookie 只能在扩展内容世界调用，结果经事件回传给页面里的 Eruda 面板 =====
   document.addEventListener('__nd_cookie_req', async function () {
-    var out = { ok: false, cookies: [], gm: 0, extra: 0, error: '' };
+    var out = { ok: false, cookies: [], gm: 0, extra: 0, error: '', cfErrors: [] };
     var gm = [];
-    try { gm = (await GM.cookie.list({ url: location.href })) || []; out.ok = true; }
+    function query(args) {
+      return new Promise(function (resolve, reject) {
+        var timer = setTimeout(function () { reject(new Error('Cookie 查询超时')); }, 2000);
+        Promise.resolve().then(function () { return GM.cookie.list(args); }).then(function (list) {
+          clearTimeout(timer);
+          if (!Array.isArray(list)) { reject(new Error('Cookie 返回格式异常')); return; }
+          resolve(list);
+        }, function (err) { clearTimeout(timer); reject(err); });
+      });
+    }
+    try { gm = await query({ url: location.href }); out.ok = true; }
     catch (e) { out.error = String(e && e.message || e); }
-    out.gm = gm.length;
+    // 定向补查 cf_clearance；不写 Cookie、不发网络请求，结果限定为当前页面适用记录。
+    var host = location.hostname.toLowerCase(), parts = host.split('.');
+    var queries = [{ url: location.href, name: 'cf_clearance' }, { url: location.origin + '/', name: 'cf_clearance' }];
+    if (host.indexOf(':') < 0 && !/^\d+(\.\d+){3}$/.test(host)) {
+      for (var j = 0; j < Math.max(1, parts.length - 1); j++) {
+        var domain = parts.slice(j).join('.');
+        queries.push({ domain: domain, name: 'cf_clearance' }, { domain: '.' + domain, name: 'cf_clearance' });
+      }
+    }
+    function applicable(c) {
+      if (c.name !== 'cf_clearance') return false;
+      var domain = String(c.domain || '').replace(/^\./, '').toLowerCase();
+      if (!domain || (c.hostOnly ? host !== domain : !(host === domain || host.endsWith('.' + domain)))) return false;
+      var path = c.path || '/', current = location.pathname || '/';
+      if (!(current === path || (current.indexOf(path) === 0 && (path.endsWith('/') || current.charAt(path.length) === '/')))) return false;
+      if (c.secure && location.protocol !== 'https:') return false;
+      if (typeof c.expirationDate === 'number' && c.expirationDate > 0 && c.expirationDate * 1000 <= Date.now()) return false;
+      return true;
+    }
+    await Promise.all(queries.map(async function (args) {
+      try {
+        var list = await query(args);
+        list.filter(applicable).forEach(function (c) { gm.push(Object.assign({}, c, { source: 'GM.cookie（cf_clearance 定向补查）' })); });
+      } catch (e) { out.cfErrors.push(String(e && e.message || e)); }
+    }));
     // 保留 GM 返回的不同 domain/path 的同名 Cookie。document.cookie 没有属性，不能凭名称覆盖它们。
     var unique = [], seen = Object.create(null);
     gm.forEach(function (c) {
@@ -71,8 +105,10 @@
       }
       extra.push({ name: n, value: v, source: 'document.cookie（域名/路径属性未知）' });
     });
+    out.gm = unique.length;
     out.extra = extra.length;
     out.cookies = unique.concat(extra);
+    out.cfFound = out.cookies.some(function (c) { return c.name === 'cf_clearance'; });
     document.dispatchEvent(new CustomEvent('__nd_cookie_res', { detail: JSON.stringify(out) }));
   });
 
@@ -162,17 +198,14 @@
         var tools = mk('div', 'margin-bottom:6px');
         var list = mk('div');
         function flash(t) { msg.textContent = t; }
-        function doCopy(t) { if (!t) { flash('没有可复制的 Cookie'); return; } copy(t, function (ok) { flash(ok ? '已复制 (' + t.length + ' 字符)' : '自动复制被拦截，请在下方文本框长按全选后拷贝'); if (!ok) manual(t); }); }
-        function manual(t) {
-          var ta = mk('textarea', 'width:100%;height:120px;font-size:16px;margin:6px 0;box-sizing:border-box');
-          ta.value = t; list.insertBefore(ta, list.firstChild);
-          setTimeout(function () { ta.focus(); ta.select(); try { ta.setSelectionRange(0, t.length); } catch (e) {} }, 50);
-        }
+        function doCopy(t) { if (!t) { flash('没有可复制的 Cookie'); return; } copy(t, function (ok) { flash(ok ? '已复制 (' + t.length + ' 字符)' : '复制失败：浏览器未允许写入剪贴板'); }); }
         function draw(res) {
           list.innerHTML = '';
           var cs = res.cookies || [];
           if (res.ok) flash('共 ' + cs.length + ' 条：GM.cookie ' + res.gm + ' 条' + (res.extra ? ' + document.cookie 补充 ' + res.extra + ' 条' : '') + '（Safari 接口可能漏读会话 Cookie）');
-          else flash('GM.cookie 失败：' + res.error + '；仅显示 document.cookie（不含 HttpOnly）共 ' + cs.length + ' 条');
+          else flash('主查询失败：' + res.error + '；已显示补查及网页可见结果，共 ' + cs.length + ' 条');
+          var cfMsg = res.cfFound ? 'cf_clearance：已找到' : (res.cfErrors && res.cfErrors.length ? 'cf_clearance：未找到，部分查询失败（无法确认是否存在）' : 'cf_clearance：当前接口查询未找到（可能未生成或接口未返回）');
+          list.appendChild(mk('div', 'margin:6px 0;padding:8px;border:1px solid #bbb;border-radius:6px;word-break:break-all', cfMsg));
           cur = cs;
           if (!cs.length) { list.appendChild(mk('div', 'color:#999;padding:12px 0', '(无 Cookie)')); return; }
           cs.forEach(function (c) {
@@ -199,13 +232,13 @@
           var h = function (ev) { done = true; loading = false; document.removeEventListener('__nd_cookie_res', h); try { draw(JSON.parse(ev.detail)); } catch (e) { flash('解析失败：' + e); } };
           document.addEventListener('__nd_cookie_res', h);
           document.dispatchEvent(new CustomEvent('__nd_cookie_req'));
-          setTimeout(function () { if (!done) { loading = false; document.removeEventListener('__nd_cookie_res', h); flash('无响应：内容世界未返回（脚本未授权 GM.cookie 或未运行）'); } }, 3000);
+          setTimeout(function () { if (!done) { loading = false; document.removeEventListener('__nd_cookie_res', h); flash('无响应：内容世界未返回（脚本未授权 GM.cookie 或未运行）'); } }, 7000);
         }
         tools.appendChild(btn('刷新', load));
         tools.appendChild(btn('复制全部(请求头)', function () { doCopy(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
         tools.appendChild(btn('复制JSON', function () { doCopy(JSON.stringify(cur, null, 2)); }));
-        tools.appendChild(btn('在 App 读取全部 Cookie', function () {
-          // 会话类/HttpOnly Cookie 在 Safari 脚本里读不到；跳到 Scripting 的 Cookie Reader，在 App 内 WebView 登录后读取
+        tools.appendChild(btn('App内操作', function () {
+          // App WebView 读取独立会话；Safari 接口返回范围以当前 Scripting 版本为准
           var u = location.href;
           var link = 'scripting://run/' + 'CookieReader' + '?url=' + encodeURIComponent(u);
           flash('正在跳转到 Scripting 的「CookieReader」（需先安装该脚本，脚本名必须是 CookieReader）。若没反应，点下方链接。');
@@ -216,7 +249,6 @@
           list.appendChild(mk('div', 'color:#666;font-size:12px;margin-top:6px', '提示：App WebView 与 Safari 登录状态独立。首次需在 App 登录，以后可复用仍有效的 WebView 会话。'));
           try { location.href = link; } catch (e) {}
         }));
-        tools.appendChild(btn('手动复制框', function () { manual(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
         root.appendChild(tools); root.appendChild(msg); root.appendChild(list);
         this._load = load;
       };
