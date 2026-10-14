@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.1.0
+// @version      2.1.1
 // @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -53,7 +53,7 @@
     if (inited) return;
     if (!document.body) return;
     inited = true;
-    inPage('try{window.eruda.init({autoScale:true});window.eruda.show();}catch(e){document.documentElement.setAttribute("data-nd-err",String(e));}');
+    inPage('try{window.eruda.init({autoScale:true});}catch(e){document.documentElement.setAttribute("data-nd-err",String(e));}');
     var err = de.getAttribute('data-nd-err');
     if (err) { toast('开发者工具启动失败: ' + err); return; }
     if (!document.getElementById('eruda')) toast('开发者工具未能显示（页面 CSP 可能拦截了内联脚本）');
