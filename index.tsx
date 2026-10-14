@@ -1,6 +1,6 @@
 import { Button, List, Navigation, NavigationStack, Script, Section, Text, TextField, useState } from "scripting"
 
-const VERSION = "0.3.1"
+const VERSION = "0.3.2"
 
 type Ck = {
   name: string
@@ -93,6 +93,45 @@ function View() {
     } finally { setBusy(false) }
   }
 
+  async function verifyImported() {
+    if (busy) return
+    setBusy(true)
+    let isolated: WebViewController | null = null
+    try {
+      const target = new URL(url.trim())
+      if (target.protocol !== "https:") throw new Error("验证仅支持 HTTPS")
+      const raw = (await Pasteboard.getString() || "").trim()
+      if (!raw) throw new Error("请先复制当前网站的 Cookie JSON 或请求头")
+      const parsed = raw.startsWith("[") ? JSON.parse(raw) : raw.replace(/^Cookie:\s*/i, "").split(/;\s*/).filter(Boolean).map(x => {
+        const i = x.indexOf("=")
+        if (i <= 0) throw new Error("Cookie 请求头格式错误")
+        return { name: x.slice(0, i), value: x.slice(i + 1), domain: target.hostname, path: "/", isSecure: true, isHTTPOnly: true, isSessionOnly: true }
+      })
+      if (!Array.isArray(parsed) || !parsed.length) throw new Error("没有可导入的 Cookie")
+      const host = target.hostname.toLowerCase()
+      const imported: Ck[] = parsed.map(c => {
+        if (!c || typeof c.name !== "string" || !c.name || typeof c.value !== "string") throw new Error("Cookie 名称或值无效")
+        const domain = String(c.domain || host), clean = domain.replace(/^\./, "").toLowerCase()
+        if (!clean || !(host === clean || (domain.startsWith(".") && host.endsWith("." + clean)))) throw new Error("Cookie 域名不属于当前网址")
+        const expiry = c.expiresDate ? new Date(c.expiresDate) : typeof c.expirationDate === "number" && c.expirationDate > 0 ? new Date(c.expirationDate * 1000) : null
+        if (expiry && (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now())) throw new Error("Cookie 已过期或过期时间无效")
+        return { name: c.name, value: c.value, domain, path: c.path || "/", isSecure: c.isSecure ?? c.secure ?? true, isHTTPOnly: c.isHTTPOnly ?? c.httpOnly ?? true, isSessionOnly: expiry ? false : true, expiresDate: expiry }
+      })
+      isolated = new WebViewController({ ephemeral: true })
+      if ((await isolated.getAllCookies()).length) throw new Error("隔离存储并非空，已停止验证")
+      for (const c of imported) if (!await isolated.setCookie(c)) throw new Error("Cookie 注入失败：" + c.name)
+      const sent = await isolated.getCookies(target.href)
+      if (!sent.length) throw new Error("导入记录均不适用于当前网址")
+      setStatus("已向隔离会话注入 " + imported.length + " 条，当前网址适用 " + sent.length + " 条。不要手动登录，观察是否显示退出账户或登录页；若遇到 Cloudflare，可完成验证，但不要输入账号密码。")
+      await isolated.loadURL(target.href)
+      await isolated.present({ navigationTitle: "隔离验证：不要手动登录" })
+      const result = await isolated.evaluateJavaScript<{ title: string, url: string, ua: string, logout: boolean, login: boolean }>("return {title:document.title,url:location.href,ua:navigator.userAgent,logout:(document.body.innerText||'').includes('退出账户'),login:!!document.querySelector('input[type=password]')}")
+      setStatus("隔离验证结束：" + (result.logout ? "发现退出账户文字（登录线索）" : result.login ? "发现登录密码框（尚未恢复登录）" : "页面状态不明确") + "。标题：" + result.title + "；网址：" + result.url + "；UA：" + result.ua + "。请把此状态反馈；不会保存导入 Cookie，也未改动原 WebView 登录。")
+    } catch (e: any) {
+      setStatus("隔离验证失败：" + String(e && e.message || e))
+    } finally { if (isolated) isolated.dispose(); setBusy(false) }
+  }
+
   async function copyText(t: string, tip: string) {
     if (!t) { setStatus("当前网址没有可复制的 Cookie，请先读取"); return }
     try { await Pasteboard.setString(t); setStatus("已复制：" + tip) } catch (e: any) { setStatus("复制失败：" + String(e && e.message || e)) }
@@ -106,6 +145,7 @@ function View() {
         <TextField title="登录网址" value={url} onChanged={(v) => { setUrl(v); setCookies([]); setRequestCookies([]) }} />
         <Button title="打开网页（可复用已有登录）" action={openLogin} />
         <Button title="读取 Cookie" action={read} />
+        <Button title="用剪贴板 Cookie 验证独立会话" action={verifyImported} />
       </Section>
       <Section header={<Text>状态</Text>}>
         <Text>{status}</Text>
