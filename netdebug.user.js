@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网络调试面板
 // @namespace    openbear.netdebug
-// @version      1.0.0
+// @version      1.0.1
 // @description  Safari 网络调试：抓取 fetch/XHR/WebSocket/资源错误，GM 无跨域探测、出口信息、Cookie 查看、日志复制与保存
 // @match        *://*/*
 // @run-at       document-start
@@ -86,6 +86,22 @@
       window.WebSocket = NW;
     }
 
+    function fmt(v) {
+      if (v === undefined) return 'undefined';
+      if (typeof v === 'function') return cut(v.toString(), 500);
+      try { if (typeof v === 'object') return cut(JSON.stringify(v, null, 2), 3000); } catch (e) {}
+      return cut(String(v), 3000);
+    }
+    document.addEventListener('__nd_exec', function (ev) {
+      var code = String(ev.detail), id = add('console', '> ' + cut(code, 500), '', '…');
+      try {
+        var r = (0, eval)(code);
+        if (r && typeof r.then === 'function') r.then(function (v) { upd(id, '=', fmt(v)); }, function (e) { upd(id, 'ERR', String(e)); });
+        else upd(id, '=', fmt(r));
+      } catch (e) { upd(id, 'ERR', String(e && e.stack || e)); }
+    });
+    document.documentElement.setAttribute('data-nd', '1');
+
     window.addEventListener('error', function (ev) {
       var t = ev.target;
       if (t && t !== window && (t.src || t.href)) add('error', '资源加载失败 <' + t.tagName.toLowerCase() + '>', t.src || t.href, 'ERR');
@@ -107,7 +123,7 @@
     sc.textContent = '(' + pageHook.toString() + ')();';
     (document.head || document.documentElement).appendChild(sc);
     sc.remove();
-    hookOK = true;
+    hookOK = document.documentElement.getAttribute('data-nd') === '1';
   } catch (e) { hookOK = false; }
 
   // ========== 日志模型 ==========
@@ -235,6 +251,19 @@
     } catch (er) { upd(e, 'ERR', String(er && er.message || er)); }
   }
 
+  function runCode(code) {
+    code = (code || '').trim();
+    if (!code) return;
+    if (hookOK) { document.dispatchEvent(new CustomEvent('__nd_exec', { detail: code })); return; }
+    // 降级：钩子不可用（CSP），在扩展隔离环境执行，无法访问页面变量
+    var e = add('console', '> ' + cut(code, 500) + '  (隔离环境)', '', '…');
+    try {
+      var r = (0, eval)(code);
+      Promise.resolve(r).then(function (v) { upd(e, '=', v === undefined ? 'undefined' : (typeof v === 'object' ? cut(JSON.stringify(v, null, 2), 3000) : cut(String(v), 3000))); },
+        function (er) { upd(e, 'ERR', String(er)); });
+    } catch (er) { upd(e, 'ERR', String(er && er.stack || er)); }
+  }
+
   function textOf() {
     return envInfo() + '\n\n--- 最慢资源 ---\n' + slowRes() + '\n\n--- 日志 ---\n' +
       logs.map(function (e) { return '[' + e.time + '] ' + e.type + ' ' + e.status + ' ' + e.title + (e.detail ? '\n    ' + e.detail.replace(/\n/g, '\n    ') : ''); }).join('\n');
@@ -268,7 +297,7 @@
     var s = String(e.status);
     if (e.type === 'error' || /ERR|JS|失败|超时/.test(s)) return '#ff6b6b';
     if (/^[45]/.test(s) || s === 'warn') return '#ffb454';
-    if (/^[23]|OPEN|✓/.test(s)) return '#6bd68a';
+    if (/^[23]|OPEN|✓|^=$/.test(s)) return '#6bd68a';
     return '#ccc';
   }
   function isErr(e) { return e.type === 'error' || /ERR|JS|^[45]|失败|超时|^error$/.test(String(e.status)); }
@@ -308,8 +337,28 @@
     bar2.appendChild(btn('保存', saveAll));
     bar2.appendChild(btn('清空', function () { logs = []; byId = {}; badge.textContent = 0; render(); }));
     bar2.appendChild(btn('关闭', toggle));
+    // Console 输入行（放在上方，避免被 iOS 键盘遮挡）；字号 16px 防止 Safari 聚焦时自动放大
+    var inRow = el('div', 'display:flex;flex:none;padding:2px 4px 6px;gap:4px');
+    var inp = el('input', 'flex:1;min-width:0;background:#2c2c2e;color:#fff;border:1px solid #555;border-radius:6px;padding:7px 8px;font:16px Menlo,monospace');
+    inp.type = 'text'; inp.placeholder = '> 输入 JS，如 document.title';
+    inp.setAttribute('autocapitalize', 'off'); inp.setAttribute('autocorrect', 'off'); inp.setAttribute('spellcheck', 'false');
+    var hist = [], hi = 0;
+    function go() {
+      var v = inp.value; if (!v.trim()) return;
+      hist.push(v); hi = hist.length; filter = 'console'; runCode(v); inp.value = '';
+    }
+    inp.addEventListener('keydown', function (ev) {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') { ev.preventDefault(); go(); }
+      else if (ev.key === 'ArrowUp' && hi > 0) { inp.value = hist[--hi]; ev.preventDefault(); }
+      else if (ev.key === 'ArrowDown') { inp.value = hi < hist.length - 1 ? hist[++hi] : ''; hi = Math.min(hi, hist.length); ev.preventDefault(); }
+    });
+    ['keyup', 'keypress'].forEach(function (k) { inp.addEventListener(k, function (ev) { ev.stopPropagation(); }); });
+    inRow.appendChild(inp);
+    inRow.appendChild(btn('运行', go));
+    inRow.appendChild(btn('↑', function () { if (hi > 0) inp.value = hist[--hi]; }));
     listEl = el('div', 'flex:1;overflow:auto;-webkit-overflow-scrolling:touch');
-    panel.appendChild(bar); panel.appendChild(bar2); panel.appendChild(listEl);
+    panel.appendChild(bar); panel.appendChild(bar2); panel.appendChild(inRow); panel.appendChild(listEl);
     document.documentElement.appendChild(panel);
     document.documentElement.appendChild(fab);
   }
