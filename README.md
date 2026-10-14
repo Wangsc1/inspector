@@ -5,17 +5,10 @@ Safari 开发者工具 + Cookie 读取，基于 [Scripting](https://apps.apple.c
 | 部分 | 文件 | 运行位置 | 作用 |
 |---|---|---|---|
 | 开发者工具 | `netdebug.user.js` | Safari 扩展 | Eruda 轻量开发者工具（Elements / Console / Network / Resources / Sources / Info）、设置页中文、Cookies 页签 |
-| CookieReader | `index.tsx` + `script.json` | Scripting App | 在 App 内 WebView 登录后，读取全部 Cookie（含 HttpOnly 与会话 Cookie） |
 
 ## 安装
 
-**1. CookieReader（Scripting 一键导入）**
-
-```
-https://scripting.fun/import_scripts?urls=["https%3A%2F%2Fgithub.com%2FWangsc1%2Finspector"]
-```
-
-**2. 开发者工具（Safari 扩展）**
+**开发者工具（Safari 扩展）**
 
 在 Scripting 的 Safari 扩展弹窗中选择从 URL 安装：
 
@@ -67,3 +60,6 @@ Cookie 值展示与复制可能暴露登录状态；只在可信站点调试，�
 - 新增「用剪贴板 Cookie 验证独立会话」，支持 JSON 与 Cookie 请求头。只在临时非持久化 WebView 注入；不复用已有登录，不保存导入记录，关闭后释放。
 - 手机操作：更新 CookieReader，复制待测 Cookie，点验证入口，不输入账号密码；关闭网页后反馈状态。每套 Cookie 分别验证。
 - 请求头缺少域名/路径属性，按当前网址域名及根路径导入；优先使用 JSON。文字检测仅作为登录线索，不等同最终鉴权结论。
+
+### 移除 CookieReader
+- 已从仓库删除 `index.tsx` 和 `script.json`。Safari 脚本中的「App内操作」按钮仍会尝试跳转 CookieReader，未安装则不可用。
