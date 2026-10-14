@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网络调试面板
 // @namespace    openbear.netdebug
-// @version      1.0.2
+// @version      1.0.3
 // @description  Safari 网络调试：抓取 fetch/XHR/WebSocket/资源错误，GM 无跨域探测、出口信息、Cookie 查看、日志复制与保存
 // @match        *://*/*
 // @run-at       document-start
@@ -144,12 +144,16 @@
     if (detail !== undefined) e.detail = detail;
     refresh();
   }
-  var pending = false;
+  var pending = false, touching = false;
   function refresh() {
     if (badge) badge.textContent = logs.length;
     if (!open || pending) return;
     pending = true;
-    setTimeout(function () { pending = false; render(); }, 120);
+    setTimeout(function () {
+      pending = false;
+      if (touching) { refresh(); return; } // 手指按着时不重绘，避免按钮被替换导致点击丢失
+      render();
+    }, 120);
   }
 
   document.addEventListener('__nd_evt', function (ev) {
@@ -265,7 +269,8 @@
     }).join('\n') || '(无)';
     e.actions = [
       { label: '复制全部(请求头格式)', text: header },
-      { label: '复制JSON', text: JSON.stringify(cs, null, 2) }
+      { label: '复制JSON', text: JSON.stringify(cs, null, 2) },
+      { label: '手动复制框', text: header, manual: true }
     ].concat(cs.map(function (c) { return { label: '复制 ' + c.name, text: c.name + '=' + c.value }; }));
     upd(e, cs.length + ' 条', detail);
   }
@@ -287,9 +292,50 @@
     return envInfo() + '\n\n--- 最慢资源 ---\n' + slowRes() + '\n\n--- 日志 ---\n' +
       logs.map(function (e) { return '[' + e.time + '] ' + e.type + ' ' + e.status + ' ' + e.title + (e.detail ? '\n    ' + e.detail.replace(/\n/g, '\n    ') : ''); }).join('\n');
   }
-  async function copyText(t) {
-    try { await GM.setClipboard(t); toast('已复制'); }
-    catch (e) { try { await navigator.clipboard.writeText(t); toast('已复制'); } catch (e2) { toast('复制失败'); } }
+  // 同步 execCommand：必须在点击手势内直接执行，不能先 await
+  function syncCopy(t) {
+    var ta = document.createElement('textarea');
+    ta.value = t; ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;font-size:16px;z-index:2147483647';
+    document.documentElement.appendChild(ta);
+    var ok = false;
+    try {
+      ta.focus(); ta.select(); ta.setSelectionRange(0, t.length);
+      ok = document.execCommand('copy');
+    } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  function manualCopy(t) {
+    var m = el('div', 'position:fixed;left:0;right:0;top:0;bottom:0;background:#000d;z-index:2147483647;display:flex;flex-direction:column;padding:16px;gap:8px');
+    m.appendChild(el('div', 'color:#fff;font:14px -apple-system', '自动复制被拦截，请长按文本→全选→拷贝'));
+    var ta = el('textarea', 'flex:1;background:#1c1c1e;color:#fff;border:1px solid #555;border-radius:8px;padding:8px;font:16px Menlo,monospace');
+    ta.value = t;
+    m.appendChild(ta);
+    var row = el('div', 'display:flex;gap:8px');
+    row.appendChild(btn('全选', function () { ta.focus(); ta.select(); ta.setSelectionRange(0, t.length); }));
+    row.appendChild(btn('关闭', function () { m.remove(); }));
+    m.appendChild(row);
+    document.documentElement.appendChild(m);
+    setTimeout(function () { ta.focus(); ta.select(); ta.setSelectionRange(0, t.length); }, 50);
+  }
+  function copyText(t) {
+    if (syncCopy(t)) { toast('已复制 (' + t.length + ' 字符)'); return; }
+    var tried = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        tried = true;
+        navigator.clipboard.writeText(t).then(function () { toast('已复制 (' + t.length + ' 字符)'); },
+          function () { gmCopy(t); });
+      }
+    } catch (e) { tried = false; }
+    if (!tried) gmCopy(t);
+  }
+  function gmCopy(t) {
+    try {
+      Promise.resolve(GM.setClipboard(t)).then(function () { toast('已通过 GM 复制，若粘贴为空请用手动复制'); },
+        function () { manualCopy(t); });
+    } catch (e) { manualCopy(t); }
   }
   function copyAll() { return copyText(textOf()); }
   async function saveAll() {
@@ -331,7 +377,7 @@
         if (e.actions && e.actions.length) {
           var ab = el('div', 'margin-top:6px;white-space:normal');
           e.actions.forEach(function (a) {
-            ab.appendChild(btn(a.label, function () { copyText(a.text); }));
+            ab.appendChild(btn(a.label, function () { a.manual ? manualCopy(a.text) : copyText(a.text); }));
           });
           row.appendChild(ab);
         }
@@ -385,6 +431,10 @@
     inRow.appendChild(btn('运行', go));
     inRow.appendChild(btn('↑', function () { if (hi > 0) inp.value = hist[--hi]; }));
     listEl = el('div', 'flex:1;overflow:auto;-webkit-overflow-scrolling:touch');
+    var tEnd = function () { setTimeout(function () { touching = false; }, 400); };
+    listEl.addEventListener('touchstart', function () { touching = true; }, { passive: true });
+    listEl.addEventListener('touchend', tEnd, { passive: true });
+    listEl.addEventListener('touchcancel', tEnd, { passive: true });
     panel.appendChild(bar); panel.appendChild(bar2); panel.appendChild(inRow); panel.appendChild(listEl);
     document.documentElement.appendChild(panel);
     document.documentElement.appendChild(fab);
