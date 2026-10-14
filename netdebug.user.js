@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.3.1
+// @version      2.4.0
 // @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -60,6 +60,40 @@
     out.extra = extra.length;
     out.cookies = gm.concat(extra);
     document.dispatchEvent(new CustomEvent('__nd_cookie_res', { detail: JSON.stringify(out) }));
+  });
+
+  // ===== Cookie 诊断：用多种参数调用 GM.cookie.list，看哪种能读到会话 Cookie（文档只写了 url/name，其余参数是否支持需实测）=====
+  document.addEventListener('__nd_cookie_diag_req', async function () {
+    var host = location.hostname, parts = host.split('.');
+    var root = parts.length > 2 ? parts.slice(-2).join('.') : host;
+    var tests = [
+      ['url=当前页面', { url: location.href }],
+      ['url=站点根 /', { url: location.origin + '/' }],
+      ['url=https://域名', { url: 'https://' + host }],
+      ['domain=' + host, { domain: host }],
+      ['domain=.' + root, { domain: '.' + root }],
+      ['url+session:true', { url: location.href, session: true }],
+      ['url+session:false', { url: location.href, session: false }],
+      ['url+storeId=persistent-1', { url: location.href, storeId: 'persistent-1' }],
+      ['url+storeId=session-1', { url: location.href, storeId: 'session-1' }],
+      ['url+storeId=default', { url: location.href, storeId: 'default' }],
+      ['无参数', {}]
+    ];
+    var rows = [], all = {};
+    for (var i = 0; i < tests.length; i++) {
+      var t = tests[i], r = { label: t[0], arg: JSON.stringify(t[1]) };
+      try {
+        var list = await GM.cookie.list(t[1]);
+        r.ok = true; r.n = (list || []).length;
+        r.names = (list || []).map(function (c) { return c.name + (c.httpOnly ? '[H]' : '') + (c.session || c.expirationDate == null ? '[会话]' : ''); });
+        (list || []).forEach(function (c) { all[c.name] = true; });
+      } catch (e) { r.ok = false; r.err = String(e && e.message || e); }
+      rows.push(r);
+    }
+    var docNames = (document.cookie ? document.cookie.split(/;\s*/) : []).map(function (x) { return x.split('=')[0]; });
+    document.dispatchEvent(new CustomEvent('__nd_cookie_diag_res', { detail: JSON.stringify({
+      rows: rows, union: Object.keys(all), docNames: docNames, host: host
+    }) }));
   });
 
   // ===== 设置页汉化：Eruda 3.4.3 没有语言选项，文案是源码字面量，加载前按精确上下文替换（替换不到则跳过，不影响功能）=====
@@ -187,6 +221,31 @@
         tools.appendChild(btn('刷新', load));
         tools.appendChild(btn('复制全部(请求头)', function () { doCopy(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
         tools.appendChild(btn('复制JSON', function () { doCopy(JSON.stringify(cur, null, 2)); }));
+        tools.appendChild(btn('诊断', function () {
+          flash('诊断中（约数秒）…');
+          var done = false;
+          var h = function (ev) {
+            done = true; document.removeEventListener('__nd_cookie_diag_res', h);
+            var d; try { d = JSON.parse(ev.detail); } catch (e) { flash('解析失败：' + e); return; }
+            list.innerHTML = '';
+            flash('诊断完成。每行：调用参数 → 返回条数与名称。[H]=HttpOnly，[会话]=无过期时间');
+            var report = [];
+            d.rows.forEach(function (r) {
+              var line = r.ok ? (r.label + ' → ' + r.n + ' 条' + (r.n ? '：' + r.names.join(', ') : '')) : (r.label + ' → 报错：' + r.err);
+              report.push(line);
+              var box = mk('div', 'border:1px solid #ccc;border-radius:6px;padding:6px 8px;margin:4px 0;background:#fff;word-break:break-all;font-size:12px;color:' + (r.ok ? '#222' : '#c00'));
+              box.textContent = line;
+              list.appendChild(box);
+            });
+            var sum = '合并所有调用得到 ' + d.union.length + ' 个名称：' + d.union.join(', ') + '\ndocument.cookie 可见 ' + d.docNames.length + ' 个：' + d.docNames.join(', ');
+            report.push(sum);
+            list.appendChild(mk('div', 'padding:8px 0;color:#333;font-size:12px;white-space:pre-wrap;word-break:break-all', sum));
+            list.appendChild(btn('复制诊断结果（不含 Cookie 值）', function () { doCopy(report.join('\n')); }));
+          };
+          document.addEventListener('__nd_cookie_diag_res', h);
+          document.dispatchEvent(new CustomEvent('__nd_cookie_diag_req'));
+          setTimeout(function () { if (!done) { document.removeEventListener('__nd_cookie_diag_res', h); flash('诊断无响应'); } }, 15000);
+        }));
         tools.appendChild(btn('手动复制框', function () { manual(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
         root.appendChild(tools); root.appendChild(msg); root.appendChild(list);
         this._load = load;
