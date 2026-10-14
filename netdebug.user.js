@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.5.0
+// @version      2.5.1
 // @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -13,6 +13,7 @@
 // @grant        GM.getResourceText
 // @grant        GM.registerMenuCommand
 // @grant        GM.cookie
+// @grant        GM.xmlHttpRequest
 // @connect      *
 // ==/UserScript==
 
@@ -114,6 +115,8 @@
     add('GM.cookie 成员: ' + keys(GM.cookie));
     try { add('脚本管理器: ' + (GM.info && GM.info.scriptHandler) + ' ' + (GM.info && GM.info.version)); } catch (e) {}
     add('typeof browser=' + typeof browser + ' | typeof chrome=' + typeof chrome);
+    try { if (typeof browser !== 'undefined') add('browser 成员: ' + keys(browser)); } catch (e) {}
+    try { if (typeof browser !== 'undefined' && browser.runtime) add('browser.runtime 成员: ' + keys(browser.runtime)); } catch (e) {}
     var api = (typeof browser !== 'undefined' && browser) || (typeof chrome !== 'undefined' && chrome) || null;
     if (api && api.cookies) {
       add('browser.cookies 成员: ' + keys(api.cookies));
