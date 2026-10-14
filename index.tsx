@@ -1,6 +1,6 @@
 import { Button, List, Navigation, NavigationStack, Script, Section, Text, TextField, useState } from "scripting"
 
-const VERSION = "0.2.0"
+const VERSION = "0.3.0"
 
 type Ck = {
   name: string
@@ -34,9 +34,13 @@ function initialUrl(): string {
   return def
 }
 
+let activeController: WebViewController | null = null
+
 function View() {
   const [url, setUrl] = useState(initialUrl())
   const [cookies, setCookies] = useState<Ck[]>([])
+  const [requestCookies, setRequestCookies] = useState<Ck[]>([])
+  const [busy, setBusy] = useState(false)
   const fromTool = (() => { try { const q = Script.queryParameters as any; return !!(q && typeof q.url === "string" && q.url) } catch (e) { return false } })()
   const [status, setStatus] = useState(fromTool
     ? "已从开发者工具带入网址。点「打开并登录」，在网页里登录，关闭网页后点「读取 Cookie」"
@@ -45,49 +49,89 @@ function View() {
   const [wv, setWv] = useState<WebViewController | null>(null)
 
   async function openLogin() {
+    if (busy) return
+    setBusy(true)
     try {
-      if (wv) { try { wv.dispose() } catch (e) {} }
-      const c = new WebViewController()
+      const u = new URL(url.trim())
+      if (!/^https?:$/.test(u.protocol)) throw new Error("只支持 HTTP/HTTPS 网址")
+      const c = wv || new WebViewController()
+      activeController = c
       setWv(c)
+      setCookies([]); setRequestCookies([])
       setStatus("正在加载…")
-      const ok = await c.loadURL(url)
+      const ok = await c.loadURL(u.href)
       setStatus(ok ? "页面已加载，请在网页中登录。登录完成后关闭网页，再点「读取 Cookie」" : "加载失败（可能被网站拦截），仍可尝试登录后读取")
       await c.present({ navigationTitle: "登录后关闭本页" })
       setStatus("网页已关闭，现在点「读取 Cookie」")
     } catch (e: any) {
       setStatus("打开失败：" + String(e && e.message || e))
-    }
+    } finally { setBusy(false) }
   }
 
   async function read() {
-    if (!wv) { setStatus("请先点「打开并登录」"); return }
+    if (busy) return
+    if (!wv) { setStatus("请先打开网页"); return }
+    setBusy(true)
     try {
       setStatus("读取中…")
       const all = (await wv.getAllCookies()) as Ck[]
-      let host = ""
-      try { host = new URL(url).hostname } catch (e) {}
-      const root = host.split(".").slice(-2).join(".")
-      const list = all.filter(c => !root || (c.domain || "").replace(/^\./, "").endsWith(root))
+      const target = new URL(url.trim())
+      const host = target.hostname.toLowerCase()
+      const list = all.filter(c => {
+        const domain = (c.domain || "").replace(/^\./, "").toLowerCase()
+        return domain !== "" && (host === domain || host.endsWith("." + domain))
+      })
+      // WebKit 自己判断 domain/path/secure；请求头不混入不适用于此 URL 的 Cookie
+      const send = await wv.getCookies(target.href) as Ck[]
+      setRequestCookies(send.slice().sort((a, b) => (b.path || "/").length - (a.path || "/").length))
       setCookies(list)
       const sess = list.filter(c => c.isSessionOnly).length
       const ho = list.filter(c => c.isHTTPOnly).length
-      setStatus("共 " + all.length + " 条，其中属于 " + (root || "全部") + " 的 " + list.length + " 条（会话 " + sess + "，HttpOnly " + ho + "）")
+      setStatus("共 " + all.length + " 条，其中属于 " + host + " 的 " + list.length + " 条（会话 " + sess + "，HttpOnly " + ho + "）")
     } catch (e: any) {
       setStatus("读取失败：" + String(e && e.message || e))
-    }
+    } finally { setBusy(false) }
   }
 
   async function copyText(t: string, tip: string) {
+    if (!t) { setStatus("当前网址没有可复制的 Cookie，请先读取"); return }
     try { await Pasteboard.setString(t); setStatus("已复制：" + tip) } catch (e: any) { setStatus("复制失败：" + String(e && e.message || e)) }
   }
 
-  const header = cookies.map(c => c.name + "=" + c.value).join("; ")
+  async function update() {
+    if (busy) return
+    setBusy(true)
+    try {
+      setStatus("检查更新中…")
+      const base = "https://raw.githubusercontent.com/Wangsc1/inspector/main/"
+      const r = await fetch(base + "index.tsx?ts=" + Date.now())
+      if (!r.ok) throw new Error("HTTP " + r.status)
+      const code = await r.text()
+      const m = /const VERSION = "([^"]+)"/.exec(code)
+      if (!m || !code.includes("getAllCookies") || code.length < 2000) throw new Error("更新内容校验失败")
+      const parts = m[1].split('.').map(Number), current = VERSION.split('.').map(Number)
+      let newer = false
+      for (let i = 0; i < Math.max(parts.length, current.length); i++) {
+        const a = parts[i] || 0, b = current[i] || 0
+        if (a !== b) { newer = a > b; break }
+      }
+      if (!newer) { setStatus("当前版本 " + VERSION + " 无需更新"); return }
+      const dest = Script.directory + "/index.tsx"
+      const old = await FileManager.readAsString(dest)
+      try { await FileManager.writeAsString(dest, code) }
+      catch (e) { await FileManager.writeAsString(dest, old); throw e }
+      setStatus("已更新到 " + m[1] + "，关闭后重新运行。Safari 开发者工具仍在扩展弹窗中更新。")
+    } catch (e: any) { setStatus("更新失败：" + String(e && e.message || e)) }
+    finally { setBusy(false) }
+  }
+
+  const header = requestCookies.map(c => c.name + "=" + c.value).join("; ")
 
   return <NavigationStack>
     <List navigationTitle={"Cookie 读取 " + VERSION} navigationBarTitleDisplayMode={"inline"}>
       <Section header={<Text>网址</Text>}>
-        <TextField title="登录网址" value={url} onChanged={setUrl} />
-        <Button title="打开并登录" action={openLogin} />
+        <TextField title="登录网址" value={url} onChanged={(v) => { setUrl(v); setCookies([]); setRequestCookies([]) }} />
+        <Button title="打开网页（可复用已有登录）" action={openLogin} />
         <Button title="读取 Cookie" action={read} />
       </Section>
       <Section header={<Text>状态</Text>}>
@@ -95,9 +139,12 @@ function View() {
       </Section>
       {cookies.length > 0 ? <Section header={<Text>操作</Text>}>
         <Button title={showValue ? "隐藏值（仅显示首尾）" : "显示完整值"} action={() => setShowValue(!showValue)} />
-        <Button title="复制全部（请求头格式）" action={() => copyText(header, "请求头格式 " + header.length + " 字符")} />
+        <Button title="复制当前网址 Cookie 请求头" action={() => copyText(header, "请求头格式 " + header.length + " 字符")} />
         <Button title="复制 JSON" action={() => copyText(JSON.stringify(cookies, null, 2), "JSON")} />
       </Section> : null}
+      <Section header={<Text>更新</Text>}>
+        <Button title="检查并更新 App 脚本" action={update} />
+      </Section>
       {cookies.map((c, i) => <Section key={i} header={<Text>{c.name}</Text>}>
         <Text>{showValue ? c.value : maskValue(c.value)}</Text>
         <Text>{"domain=" + c.domain + " | path=" + c.path}</Text>
@@ -109,8 +156,8 @@ function View() {
 }
 
 async function run() {
-  await Navigation.present({ element: <View /> })
-  Script.exit()
+  try { await Navigation.present({ element: <View /> }) }
+  finally { if (activeController) activeController.dispose(); Script.exit() }
 }
 
 run()

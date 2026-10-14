@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.6.1
-// @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
+// @version      2.7.0
+// @description  Safari 轻量开发者工具（不等同 Chrome DevTools）：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
 // @noframes
@@ -13,6 +13,7 @@
 // @grant        GM.getResourceText
 // @grant        GM.registerMenuCommand
 // @grant        GM.cookie
+// @connect      *
 // ==/UserScript==
 
 (async function () {
@@ -20,6 +21,12 @@
   if (window.__ndLoaded) return;
   window.__ndLoaded = true;
 
+  if (!document.documentElement) await new Promise(function (resolve) {
+    var wait = new MutationObserver(function () {
+      if (document.documentElement) { wait.disconnect(); resolve(); }
+    });
+    wait.observe(document, { childList: true });
+  });
   var de = document.documentElement;
   function toast(t) {
     var d = document.createElement('div');
@@ -45,19 +52,27 @@
     try { gm = (await GM.cookie.list({ url: location.href })) || []; out.ok = true; }
     catch (e) { out.error = String(e && e.message || e); }
     out.gm = gm.length;
-    // GM.cookie 在 Safari 上可能漏掉部分 Cookie（实测漏过 DataWave_token），用 document.cookie 补全，按名称去重
-    var names = {};
-    gm.forEach(function (c) { names[c.name] = true; });
+    // 保留 GM 返回的不同 domain/path 的同名 Cookie。document.cookie 没有属性，不能凭名称覆盖它们。
+    var unique = [], seen = Object.create(null);
+    gm.forEach(function (c) {
+      var k = JSON.stringify([c.name, c.domain || '', c.path || '/', c.storeId || '', c.partitionKey || null]);
+      if (!seen[k]) { seen[k] = true; unique.push(c); }
+    });
+    function decoded(v) { try { return decodeURIComponent(v); } catch (_) { return v; } }
     var extra = [];
     (document.cookie ? document.cookie.split(/;\s*/) : []).forEach(function (x) {
       var i = x.indexOf('='); if (i < 0) return;
-      var n = x.slice(0, i);
-      if (names[n]) return;
-      names[n] = true;
-      extra.push({ name: n, value: x.slice(i + 1), source: 'document.cookie（GM.cookie 未返回）' });
+      var n = x.slice(0, i), v = x.slice(i + 1);
+      var matches = unique.filter(function (c) { return c.name === n && (c.value === v || decoded(c.value) === decoded(v)); });
+      if (matches.length) {
+        // 网页可见值才是 document.cookie 的原文；不要盲目解码所有 Cookie
+        if (matches.length === 1 && !matches[0].httpOnly) matches[0] = Object.assign(matches[0], { value: v, source: 'GM.cookie + document.cookie' });
+        return;
+      }
+      extra.push({ name: n, value: v, source: 'document.cookie（域名/路径属性未知）' });
     });
     out.extra = extra.length;
-    out.cookies = gm.concat(extra);
+    out.cookies = unique.concat(extra);
     document.dispatchEvent(new CustomEvent('__nd_cookie_res', { detail: JSON.stringify(out) }));
   });
 
@@ -97,7 +112,8 @@
     src = await GM.getResourceText('eruda');
     if (!src || src.length < 10000) throw new Error('Eruda 资源为空(' + (src ? src.length : 0) + ')，请删除脚本后重新安装以拉取 @resource');
   } catch (e) {
-    window.addEventListener('DOMContentLoaded', function () { toast('开发者工具加载失败: ' + (e && e.message || e)); });
+    var fail = function () { toast('开发者工具加载失败: ' + (e && e.message || e)); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fail, { once: true }); else fail();
     return;
   }
 
@@ -146,7 +162,7 @@
         var tools = mk('div', 'margin-bottom:6px');
         var list = mk('div');
         function flash(t) { msg.textContent = t; }
-        function doCopy(t) { copy(t, function (ok) { flash(ok ? '已复制 (' + t.length + ' 字符)' : '自动复制被拦截，请在下方文本框长按全选后拷贝'); if (!ok) manual(t); }); }
+        function doCopy(t) { if (!t) { flash('没有可复制的 Cookie'); return; } copy(t, function (ok) { flash(ok ? '已复制 (' + t.length + ' 字符)' : '自动复制被拦截，请在下方文本框长按全选后拷贝'); if (!ok) manual(t); }); }
         function manual(t) {
           var ta = mk('textarea', 'width:100%;height:120px;font-size:16px;margin:6px 0;box-sizing:border-box');
           ta.value = t; list.insertBefore(ta, list.firstChild);
@@ -155,7 +171,7 @@
         function draw(res) {
           list.innerHTML = '';
           var cs = res.cookies || [];
-          if (res.ok) flash('共 ' + cs.length + ' 条：GM.cookie ' + res.gm + ' 条' + (res.extra ? ' + document.cookie 补充 ' + res.extra + ' 条' : '') + '（GM.cookie 能读 HttpOnly）');
+          if (res.ok) flash('共 ' + cs.length + ' 条：GM.cookie ' + res.gm + ' 条' + (res.extra ? ' + document.cookie 补充 ' + res.extra + ' 条' : '') + '（Safari 接口可能漏读会话 Cookie）');
           else flash('GM.cookie 失败：' + res.error + '；仅显示 document.cookie（不含 HttpOnly）共 ' + cs.length + ' 条');
           cur = cs;
           if (!cs.length) { list.appendChild(mk('div', 'color:#999;padding:12px 0', '(无 Cookie)')); return; }
@@ -175,13 +191,15 @@
             list.appendChild(box);
           });
         }
+        var loading = false;
         function load() {
+          if (loading) return; loading = true;
           flash('读取中…');
           var done = false;
-          var h = function (ev) { done = true; document.removeEventListener('__nd_cookie_res', h); try { draw(JSON.parse(ev.detail)); } catch (e) { flash('解析失败：' + e); } };
+          var h = function (ev) { done = true; loading = false; document.removeEventListener('__nd_cookie_res', h); try { draw(JSON.parse(ev.detail)); } catch (e) { flash('解析失败：' + e); } };
           document.addEventListener('__nd_cookie_res', h);
           document.dispatchEvent(new CustomEvent('__nd_cookie_req'));
-          setTimeout(function () { if (!done) { document.removeEventListener('__nd_cookie_res', h); flash('无响应：内容世界未返回（脚本未授权 GM.cookie 或未运行）'); } }, 3000);
+          setTimeout(function () { if (!done) { loading = false; document.removeEventListener('__nd_cookie_res', h); flash('无响应：内容世界未返回（脚本未授权 GM.cookie 或未运行）'); } }, 3000);
         }
         tools.appendChild(btn('刷新', load));
         tools.appendChild(btn('复制全部(请求头)', function () { doCopy(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
@@ -195,7 +213,7 @@
           a.href = link;
           list.innerHTML = '';
           list.appendChild(a);
-          list.appendChild(mk('div', 'color:#666;font-size:12px;margin-top:6px', '提示：App 里的 WebView 与 Safari 的登录状态相互独立，需要在 WebView 里重新登录一次。'));
+          list.appendChild(mk('div', 'color:#666;font-size:12px;margin-top:6px', '提示：App WebView 与 Safari 登录状态独立。首次需在 App 登录，以后可复用仍有效的 WebView 会话。'));
           try { location.href = link; } catch (e) {}
         }));
         tools.appendChild(btn('手动复制框', function () { manual(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
@@ -222,7 +240,11 @@
       scope.querySelectorAll('*').forEach(function (n) {
         if (n.children.length !== 0) return;
         var t = (n.textContent || '').trim();
-        if (ZH_TEXT.hasOwnProperty(t)) n.textContent = ZH_TEXT[t];
+        if (ZH_TEXT.hasOwnProperty(t)) {
+          // option 未显式指定 value 时，改文字会连带改配置值；先固定原值
+          if (n.tagName === 'OPTION') n.value = n.value;
+          n.textContent = ZH_TEXT[t];
+        }
       });
     });
   }
@@ -241,22 +263,17 @@
   var inited = false;
   function initEruda() {
     if (inited) return;
-    if (!document.body) return;
-    inited = true;
+    if (document.getElementById('eruda')) { inited = true; return; }
+    de.removeAttribute('data-nd-err');
     inPage('try{window.eruda.init({autoScale:true});(' + cookiePlugin.toString() + ')();}catch(e){document.documentElement.setAttribute("data-nd-err",String(e));}');
     var err = de.getAttribute('data-nd-err');
     if (err) { toast('开发者工具启动失败: ' + err); return; }
     if (!document.getElementById('eruda')) toast('开发者工具未能显示（页面 CSP 可能拦截了内联脚本）');
-    else watchZh();
+    else { inited = true; watchZh(); }
   }
 
-  // body 一出现就初始化，尽量抓到早期请求
-  if (document.body) initEruda();
-  else {
-    var mo = new MutationObserver(function () { if (document.body) { mo.disconnect(); initEruda(); } });
-    mo.observe(de, { childList: true });
-    document.addEventListener('DOMContentLoaded', function () { mo.disconnect(); initEruda(); });
-  }
+  // Eruda 的容器使用 documentElement，资源准备好后即可初始化
+  initEruda();
 
   // Safari 扩展菜单：直接打开完整开发者工具面板
   function show() {
