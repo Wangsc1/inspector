@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.3.0
+// @version      2.3.1
 // @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -41,16 +41,26 @@
 
   // ===== Cookie 桥接：GM.cookie 只能在扩展内容世界调用，结果经事件回传给页面里的 Eruda 面板 =====
   document.addEventListener('__nd_cookie_req', async function () {
-    var out;
-    try {
-      var list = await GM.cookie.list({ url: location.href });
-      out = { ok: true, cookies: list };
-    } catch (e) {
-      out = { ok: false, error: String(e && e.message || e), fallback: document.cookie };
-    }
+    var out = { ok: false, cookies: [], gm: 0, extra: 0, error: '' };
+    var gm = [];
+    try { gm = (await GM.cookie.list({ url: location.href })) || []; out.ok = true; }
+    catch (e) { out.error = String(e && e.message || e); }
+    out.gm = gm.length;
+    // GM.cookie 在 Safari 上可能漏掉部分 Cookie（实测漏过 DataWave_token），用 document.cookie 补全，按名称去重
+    var names = {};
+    gm.forEach(function (c) { names[c.name] = true; });
+    var extra = [];
+    (document.cookie ? document.cookie.split(/;\s*/) : []).forEach(function (x) {
+      var i = x.indexOf('='); if (i < 0) return;
+      var n = x.slice(0, i);
+      if (names[n]) return;
+      names[n] = true;
+      extra.push({ name: n, value: x.slice(i + 1), source: 'document.cookie（GM.cookie 未返回）' });
+    });
+    out.extra = extra.length;
+    out.cookies = gm.concat(extra);
     document.dispatchEvent(new CustomEvent('__nd_cookie_res', { detail: JSON.stringify(out) }));
   });
-
 
   // ===== 设置页汉化：Eruda 3.4.3 没有语言选项，文案是源码字面量，加载前按精确上下文替换（替换不到则跳过，不影响功能）=====
   var ZH = [
@@ -145,12 +155,9 @@
         }
         function draw(res) {
           list.innerHTML = '';
-          var cs;
-          if (res.ok) { cs = res.cookies || []; flash('共 ' + cs.length + ' 条（含 HttpOnly，来自 GM.cookie）'); }
-          else {
-            flash('GM.cookie 失败：' + res.error + '；已降级为 document.cookie（不含 HttpOnly）');
-            cs = res.fallback ? res.fallback.split(/;\s*/).map(function (x) { var i = x.indexOf('='); return { name: x.slice(0, i), value: x.slice(i + 1) }; }) : [];
-          }
+          var cs = res.cookies || [];
+          if (res.ok) flash('共 ' + cs.length + ' 条：GM.cookie ' + res.gm + ' 条' + (res.extra ? ' + document.cookie 补充 ' + res.extra + ' 条' : '') + '（GM.cookie 能读 HttpOnly）');
+          else flash('GM.cookie 失败：' + res.error + '；仅显示 document.cookie（不含 HttpOnly）共 ' + cs.length + ' 条');
           cur = cs;
           if (!cs.length) { list.appendChild(mk('div', 'color:#999;padding:12px 0', '(无 Cookie)')); return; }
           cs.forEach(function (c) {
