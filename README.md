@@ -63,3 +63,6 @@ Cookie 值展示与复制可能暴露登录状态；只在可信站点调试，�
 
 ### 移除 CookieReader
 - 已从仓库删除 `index.tsx` 和 `script.json`。Safari 脚本中的「App内操作」按钮仍会尝试跳转 CookieReader，未安装则不可用。
+
+### Safari 2.9.2
+- 悬浮按钮首次默认显示在左下角；已拖动并保存过位置的按钮不受影响。
