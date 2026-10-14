@@ -1,6 +1,6 @@
 import { Button, List, Navigation, NavigationStack, Script, Section, Text, TextField, useState } from "scripting"
 
-const VERSION = "0.3.0"
+const VERSION = "0.3.1"
 
 type Ck = {
   name: string
@@ -98,33 +98,6 @@ function View() {
     try { await Pasteboard.setString(t); setStatus("已复制：" + tip) } catch (e: any) { setStatus("复制失败：" + String(e && e.message || e)) }
   }
 
-  async function update() {
-    if (busy) return
-    setBusy(true)
-    try {
-      setStatus("检查更新中…")
-      const base = "https://raw.githubusercontent.com/Wangsc1/inspector/main/"
-      const r = await fetch(base + "index.tsx?ts=" + Date.now())
-      if (!r.ok) throw new Error("HTTP " + r.status)
-      const code = await r.text()
-      const m = /const VERSION = "([^"]+)"/.exec(code)
-      if (!m || !code.includes("getAllCookies") || code.length < 2000) throw new Error("更新内容校验失败")
-      const parts = m[1].split('.').map(Number), current = VERSION.split('.').map(Number)
-      let newer = false
-      for (let i = 0; i < Math.max(parts.length, current.length); i++) {
-        const a = parts[i] || 0, b = current[i] || 0
-        if (a !== b) { newer = a > b; break }
-      }
-      if (!newer) { setStatus("当前版本 " + VERSION + " 无需更新"); return }
-      const dest = Script.directory + "/index.tsx"
-      const old = await FileManager.readAsString(dest)
-      try { await FileManager.writeAsString(dest, code) }
-      catch (e) { await FileManager.writeAsString(dest, old); throw e }
-      setStatus("已更新到 " + m[1] + "，关闭后重新运行。Safari 开发者工具仍在扩展弹窗中更新。")
-    } catch (e: any) { setStatus("更新失败：" + String(e && e.message || e)) }
-    finally { setBusy(false) }
-  }
-
   const header = requestCookies.map(c => c.name + "=" + c.value).join("; ")
 
   return <NavigationStack>
@@ -142,9 +115,6 @@ function View() {
         <Button title="复制当前网址 Cookie 请求头" action={() => copyText(header, "请求头格式 " + header.length + " 字符")} />
         <Button title="复制 JSON" action={() => copyText(JSON.stringify(cookies, null, 2), "JSON")} />
       </Section> : null}
-      <Section header={<Text>更新</Text>}>
-        <Button title="检查并更新 App 脚本" action={update} />
-      </Section>
       {cookies.map((c, i) => <Section key={i} header={<Text>{c.name}</Text>}>
         <Text>{showValue ? c.value : maskValue(c.value)}</Text>
         <Text>{"domain=" + c.domain + " | path=" + c.path}</Text>

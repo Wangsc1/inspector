@@ -38,7 +38,7 @@ https://raw.githubusercontent.com/Wangsc1/inspector/main/netdebug.user.js
 
 ## 当前版本与更新
 - Safari 脚本 2.7.0：在扩展弹窗更新；保持点击齿轮展开，不自动打开。
-- App 脚本 0.3.0：升级到本版后，使用「检查并更新 App 脚本」原地更新 `index.tsx`，不覆盖本地 `script.json` 来源信息。更新后关闭并重新运行；Safari 脚本仍单独在扩展弹窗更新。
+- App 脚本 0.3.1：在 Scripting 中长按 CookieReader，选择更新。无内置更新按钮或自行覆盖源码逻辑；Safari 脚本仍单独在扩展弹窗更新。
 - Cookie 合并保留不同域名/路径的同名记录；网页来源无法提供这些属性时会标明未知。
 - App 的请求头复制由 WebKit 按输入网址筛选 Cookie，避免混入其他路径/站点的记录；JSON 展示是域名相关记录。
 
