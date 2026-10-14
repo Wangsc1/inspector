@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.9.2
+// @version      2.9.3
 // @description  Safari 轻量开发者工具（不等同 Chrome DevTools）：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -247,18 +247,6 @@
         tools.appendChild(btn('刷新', load));
         tools.appendChild(btn('复制全部(请求头)', function () { doCopy(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
         tools.appendChild(btn('复制JSON', function () { doCopy(JSON.stringify(cur, null, 2)); }));
-        tools.appendChild(btn('App内操作', function () {
-          // App WebView 读取独立会话；Safari 接口返回范围以当前 Scripting 版本为准
-          var u = location.href;
-          var link = 'scripting://run/' + 'CookieReader' + '?url=' + encodeURIComponent(u);
-          flash('正在跳转到 Scripting 的「CookieReader」（需先安装该脚本，脚本名必须是 CookieReader）。若没反应，点下方链接。');
-          var a = mk('a', 'display:block;margin:8px 0;color:var(--link-color,#0a58ca);word-break:break-all;font-size:12px', link);
-          a.href = link;
-          list.innerHTML = '';
-          list.appendChild(a);
-          list.appendChild(mk('div', 'color:var(--foreground,#666);font-size:12px;margin-top:6px', '提示：App WebView 与 Safari 登录状态独立。首次需在 App 登录，以后可复用仍有效的 WebView 会话。'));
-          try { location.href = link; } catch (e) {}
-        }));
         root.appendChild(tools); root.appendChild(msg); root.appendChild(list);
         this._load = load;
       };

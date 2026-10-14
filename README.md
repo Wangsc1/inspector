@@ -21,7 +21,6 @@ https://raw.githubusercontent.com/Wangsc1/inspector/main/netdebug.user.js
 ## 使用
 - 页面右下角出现 Eruda 齿轮图标，点开即是开发者工具，面板默认收起。
 - Cookies 页签读取 Safari 页面的 Cookie（GM.cookie + document.cookie）；旧版 Scripting 曾漏读会话 Cookie；升级修复标签页存储问题后已实测读到登录会话，但不能承诺所有记录完整。
-- 需要完整 Cookie 时，点 Cookies 页签里的「App内操作」，会跳到 CookieReader 并带入当前网址，在 App 内 WebView 登录后读取。App 内 WebView 与 Safari 的登录状态相互独立，首次需登录，后续可复用仍有效的 WebView 会话。
 
 ## 说明
 - 开发者工具默认匹配所有网站，如只需调试特定站点，请修改 `@match`。
@@ -66,3 +65,6 @@ Cookie 值展示与复制可能暴露登录状态；只在可信站点调试，�
 
 ### Safari 2.9.2
 - 悬浮按钮首次默认显示在左下角；已拖动并保存过位置的按钮不受影响。
+
+### Safari 2.9.3
+- 移除 Cookies 页签中的「App内操作」按钮。
