@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网络调试面板
 // @namespace    openbear.netdebug
-// @version      1.0.3
+// @version      1.1.0
 // @description  Safari 网络调试：抓取 fetch/XHR/WebSocket/资源错误，GM 无跨域探测、出口信息、Cookie 查看、日志复制与保存
 // @match        *://*/*
 // @run-at       document-start
@@ -9,6 +9,8 @@
 // @homepageURL   https://github.com/Wangsc1/inspector
 // @updateURL     https://raw.githubusercontent.com/Wangsc1/inspector/main/netdebug.user.js
 // @downloadURL   https://raw.githubusercontent.com/Wangsc1/inspector/main/netdebug.user.js
+// @resource     eruda https://cdn.jsdelivr.net/npm/eruda@3.4.3/eruda.js
+// @grant        GM.getResourceText
 // @grant        GM.registerMenuCommand
 // @grant        GM.xmlHttpRequest
 // @grant        GM.setClipboard
@@ -288,6 +290,33 @@
     } catch (er) { upd(e, 'ERR', String(er && er.stack || er)); }
   }
 
+  // ===== Eruda 完整开发者工具（Elements/Console/Sources/Network/Resources），按需加载到页面世界 =====
+  var erudaState = 'none'; // none | loading | ready
+  async function openEruda() {
+    if (erudaState === 'loading') return;
+    if (erudaState === 'ready') { runCode('eruda.show()'); toast('开发者工具已打开'); if (open) toggle(); return; }
+    erudaState = 'loading';
+    var e = add('info', '加载 Eruda 开发者工具', '', '…');
+    try {
+      var src = await GM.getResourceText('eruda');
+      if (!src || src.length < 10000) throw new Error('资源为空或过短(' + (src ? src.length : 0) + ')，请检查网络或重新安装脚本以拉取 @resource');
+      var s = document.createElement('script');
+      s.textContent = src + '\n;try{window.eruda.init();window.eruda.show();}catch(e){document.documentElement.setAttribute("data-nd-eruda-err",String(e));}';
+      (document.body || document.documentElement).appendChild(s);
+      s.remove();
+      await new Promise(function (r) { setTimeout(r, 300); });
+      var err = document.documentElement.getAttribute('data-nd-eruda-err');
+      if (err) throw new Error(err);
+      if (!document.getElementById('eruda')) throw new Error('注入后未检测到 Eruda 容器（可能被页面 CSP 拦截内联脚本）');
+      erudaState = 'ready';
+      upd(e, 'OK', 'Eruda 已启动。页面右下角齿轮图标或此处再点「开发者工具」可打开');
+      if (open) toggle();
+    } catch (er) {
+      erudaState = 'none';
+      upd(e, 'ERR', String(er && er.message || er));
+    }
+  }
+
   function textOf() {
     return envInfo() + '\n\n--- 最慢资源 ---\n' + slowRes() + '\n\n--- 日志 ---\n' +
       logs.map(function (e) { return '[' + e.time + '] ' + e.type + ' ' + e.status + ' ' + e.title + (e.detail ? '\n    ' + e.detail.replace(/\n/g, '\n    ') : ''); }).join('\n');
@@ -392,7 +421,7 @@
   function ask(msg, def) { return window.prompt(msg, def); }
   function build() {
     GM.addStyle('#__nd_panel *{box-sizing:border-box}');
-    fab = el('div', 'position:fixed;right:10px;bottom:90px;z-index:2147483646;width:44px;height:44px;border-radius:22px;background:#0a84ff;color:#fff;font:600 11px -apple-system;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.4)', 'Net');
+    fab = el('div', 'position:fixed;left:10px;bottom:90px;z-index:2147483646;width:44px;height:44px;border-radius:22px;background:#0a84ff;color:#fff;font:600 11px -apple-system;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.4)', 'Net');
     badge = el('span', 'position:absolute;top:-4px;right:-4px;background:#ff453a;border-radius:9px;padding:1px 5px;font-size:10px', String(logs.length));
     fab.appendChild(badge); fab.onclick = toggle;
     panel = el('div', 'display:none;position:fixed;left:0;right:0;bottom:0;height:62vh;z-index:2147483647;background:#1c1c1e;color:#eee;font-family:-apple-system;border-top:1px solid #444;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)');
@@ -400,6 +429,7 @@
     var bar = el('div', 'padding:4px;flex:none;overflow-x:auto;white-space:nowrap');
     ['all', 'fetch', 'xhr', 'ws', 'err', 'console', 'cookie', 'test', 'res'].forEach(function (f) { bar.appendChild(btn(f, function () { filter = f; render(); })); });
     var bar2 = el('div', 'padding:0 4px 4px;flex:none;overflow-x:auto;white-space:nowrap');
+    bar2.appendChild(btn('开发者工具', openEruda));
     bar2.appendChild(btn('环境', function () { add('info', '环境信息', envInfo()); }));
     bar2.appendChild(btn('慢资源', function () { add('info', '最慢资源 Top15', slowRes()); }));
     bar2.appendChild(btn('出口', traceInfo));
@@ -450,6 +480,7 @@
 
   // Safari 扩展菜单入口（无需悬浮球也能打开）
   try {
+    GM.registerMenuCommand('打开开发者工具 (Elements/Console/Sources/Network/Resources)', openEruda);
     GM.registerMenuCommand('显示/隐藏调试面板', toggle);
     GM.registerMenuCommand('复制全部日志', copyAll);
     GM.registerMenuCommand('保存日志到文件', saveAll);
