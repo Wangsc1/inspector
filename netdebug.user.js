@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.4.0
+// @version      2.5.0
 // @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -94,6 +94,80 @@
     document.dispatchEvent(new CustomEvent('__nd_cookie_diag_res', { detail: JSON.stringify({
       rows: rows, union: Object.keys(all), docNames: docNames, host: host
     }) }));
+  });
+
+  // ===== 深度诊断：除 GM.cookie 外，还有哪些路能碰到会话 Cookie（报告里不含任何 Cookie 值）=====
+  document.addEventListener('__nd_cookie_deep_req', async function () {
+    var L = [];
+    function add(x) { L.push(x); }
+    function keys(o) { try { return Object.keys(o).join(', ') || '(空)'; } catch (e) { return '(读取失败)'; } }
+    function setCookieNames(h) {
+      var out = [];
+      String(h || '').split(/\r?\n/).forEach(function (ln) {
+        var m = /^set-cookie:\s*([^=;\s]+)=[^;]*(.*)$/i.exec(ln);
+        if (m) out.push(m[1] + ' ' + (m[2] || '').replace(/^;\s*/, '').replace(/;\s*/g, ' | '));
+      });
+      return out;
+    }
+    add('【1】运行环境');
+    add('GM 成员: ' + keys(GM));
+    add('GM.cookie 成员: ' + keys(GM.cookie));
+    try { add('脚本管理器: ' + (GM.info && GM.info.scriptHandler) + ' ' + (GM.info && GM.info.version)); } catch (e) {}
+    add('typeof browser=' + typeof browser + ' | typeof chrome=' + typeof chrome);
+    var api = (typeof browser !== 'undefined' && browser) || (typeof chrome !== 'undefined' && chrome) || null;
+    if (api && api.cookies) {
+      add('browser.cookies 成员: ' + keys(api.cookies));
+      try {
+        if (api.cookies.getAllCookieStores) {
+          var st = await api.cookies.getAllCookieStores();
+          add('cookie stores: ' + JSON.stringify((st || []).map(function (x) { return x.id; })));
+        }
+      } catch (e) { add('getAllCookieStores 报错: ' + e); }
+    } else add('browser.cookies 不可用（内容脚本拿不到）');
+
+    add('【2】GM.cookie.list 附加参数');
+    var extra = [
+      ['partitionKey:{}', { url: location.href, partitionKey: {} }],
+      ['firstPartyDomain:""', { url: location.href, firstPartyDomain: '' }],
+      ['secure:true', { url: location.href, secure: true }],
+      ['无 url 仅 domain+path', { domain: location.hostname, path: '/' }]
+    ];
+    for (var i = 0; i < extra.length; i++) {
+      try {
+        var r = await GM.cookie.list(extra[i][1]);
+        add(extra[i][0] + ' → ' + (r || []).length + ' 条: ' + (r || []).map(function (c) { return c.name; }).join(', '));
+      } catch (e) { add(extra[i][0] + ' → 报错: ' + (e && e.message || e)); }
+    }
+
+    add('【3】请求是否带登录会话（三方对比，看能否确认会话 Cookie 存在且被发送）');
+    function title(t) { var m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(t || ''); return m ? m[1].replace(/\s+/g, ' ').trim().slice(0, 60) : '(无title)'; }
+    function nreq(anon) {
+      return new Promise(function (res) {
+        var done = false;
+        function fin(o) { if (!done) { done = true; res(o); } }
+        try {
+          GM.xmlHttpRequest({ method: 'GET', url: location.href, anonymous: anon, timeout: 15000, responseType: 'text',
+            onload: function (r) { fin({ ok: true, r: r }); },
+            onerror: function (r) { fin({ ok: false, err: '请求失败' }); },
+            ontimeout: function () { fin({ ok: false, err: '超时' }); } });
+        } catch (e) { fin({ ok: false, err: String(e && e.message || e) }); }
+      });
+    }
+    try {
+      var f = await fetch(location.href, { credentials: 'include' });
+      var ft = await f.text();
+      add('页面 fetch(include) → ' + f.status + ' | 最终URL ' + f.url + ' | 长度 ' + ft.length + ' | ' + title(ft));
+    } catch (e) { add('页面 fetch 报错: ' + e); }
+    var A = await nreq(false), B = await nreq(true);
+    [['GM请求(默认)', A], ['GM请求(anonymous:true)', B]].forEach(function (x) {
+      if (!x[1].ok) { add(x[0] + ' → ' + x[1].err); return; }
+      var r = x[1].r, t = r.responseText || '';
+      add(x[0] + ' → ' + r.status + ' | 最终URL ' + (r.finalUrl || r.responseURL || '?') + ' | 长度 ' + t.length + ' | ' + title(t));
+      var sc = setCookieNames(r.responseHeaders);
+      add('   响应头 Set-Cookie: ' + (sc.length ? sc.join(' ;; ') : '(无，或被运行时隐藏)'));
+    });
+    add('判读：若“页面fetch”和“GM默认”一致、“anonymous”不同(跳转登录页)，说明原生请求会带上你的登录会话。');
+    document.dispatchEvent(new CustomEvent('__nd_cookie_deep_res', { detail: JSON.stringify({ lines: L }) }));
   });
 
   // ===== 设置页汉化：Eruda 3.4.3 没有语言选项，文案是源码字面量，加载前按精确上下文替换（替换不到则跳过，不影响功能）=====
@@ -245,6 +319,23 @@
           document.addEventListener('__nd_cookie_diag_res', h);
           document.dispatchEvent(new CustomEvent('__nd_cookie_diag_req'));
           setTimeout(function () { if (!done) { document.removeEventListener('__nd_cookie_diag_res', h); flash('诊断无响应'); } }, 15000);
+        }));
+        tools.appendChild(btn('深度诊断', function () {
+          flash('深度诊断中（含网络请求，最长约 30 秒）…');
+          var done = false;
+          var h = function (ev) {
+            done = true; document.removeEventListener('__nd_cookie_deep_res', h);
+            var d; try { d = JSON.parse(ev.detail); } catch (e) { flash('解析失败：' + e); return; }
+            list.innerHTML = '';
+            flash('深度诊断完成（不含 Cookie 值）');
+            var pre = mk('div', 'font-size:12px;white-space:pre-wrap;word-break:break-all;color:#222;background:#fff;border:1px solid #ccc;border-radius:6px;padding:8px');
+            pre.textContent = d.lines.join('\n');
+            list.appendChild(pre);
+            list.appendChild(btn('复制深度诊断结果', function () { doCopy(d.lines.join('\n')); }));
+          };
+          document.addEventListener('__nd_cookie_deep_res', h);
+          document.dispatchEvent(new CustomEvent('__nd_cookie_deep_req'));
+          setTimeout(function () { if (!done) { document.removeEventListener('__nd_cookie_deep_res', h); flash('深度诊断无响应'); } }, 40000); 
         }));
         tools.appendChild(btn('手动复制框', function () { manual(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
         root.appendChild(tools); root.appendChild(msg); root.appendChild(list);
