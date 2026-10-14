@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.9.0
+// @version      2.9.1
 // @description  Safari 轻量开发者工具（不等同 Chrome DevTools）：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -63,7 +63,12 @@
     catch (e) { out.error = String(e && e.message || e); }
     // 定向补查 cf_clearance；不写 Cookie、不发网络请求，结果限定为当前页面适用记录。
     var host = location.hostname.toLowerCase(), parts = host.split('.');
-    var queries = [{ url: location.href, name: 'cf_clearance' }, { url: location.origin + '/', name: 'cf_clearance' }];
+    var queries = [{ url: location.href, name: 'cf_clearance' }, { url: location.origin + '/', name: 'cf_clearance' }, { name: 'cf_clearance' }];
+    // 只使用当前标签页查询返回的真实 storeId，不尝试其他标签页或猜测的存储。
+    var stores = Array.from(new Set(gm.map(function (c) { return c.storeId; }).filter(Boolean)));
+    stores.forEach(function (storeId) {
+      queries.push({ url: location.href, name: 'cf_clearance', storeId: storeId }, { domain: host, name: 'cf_clearance', storeId: storeId });
+    });
     if (host.indexOf(':') < 0 && !/^\d+(\.\d+){3}$/.test(host)) {
       for (var j = 0; j < Math.max(1, parts.length - 1); j++) {
         var domain = parts.slice(j).join('.');
@@ -207,9 +212,9 @@
         function draw(res) {
           list.innerHTML = '';
           var cs = res.cookies || [];
-          if (res.ok) flash('共 ' + cs.length + ' 条：GM.cookie ' + res.gm + ' 条' + (res.extra ? ' + document.cookie 补充 ' + res.extra + ' 条' : '') + '（Safari 接口可能漏读会话 Cookie）');
+          if (res.ok) flash('共 ' + cs.length + ' 条：GM.cookie ' + res.gm + ' 条' + (res.extra ? ' + document.cookie 补充 ' + res.extra + ' 条' : ''));
           else flash('主查询失败：' + res.error + '；已显示补查及网页可见结果，共 ' + cs.length + ' 条');
-          var cfMsg = res.cfFound ? 'cf_clearance：已找到' : (res.cfErrors && res.cfErrors.length ? 'cf_clearance：未找到，部分查询失败（无法确认是否存在）' : 'cf_clearance：当前接口查询未找到（可能未生成或接口未返回）');
+          var cfMsg = res.cfFound ? 'cf_clearance：已读取，可使用下方按钮复制' : (res.cfErrors && res.cfErrors.length ? 'cf_clearance：未读到，部分查询失败。不能据此判断 Cookie 是否存在。' : 'cf_clearance：已完成名称、网址、域名及当前存储补查，仍未读到。可能未生成或接口未暴露，不能由脚本生成。');
           list.appendChild(mk('div', 'margin:6px 0;padding:8px;border:1px solid var(--border,#bbb);border-radius:6px;word-break:break-all', cfMsg));
           cur = cs;
           if (!cs.length) { list.appendChild(mk('div', 'color:var(--foreground,#999);padding:12px 0', '(无 Cookie)')); return; }
