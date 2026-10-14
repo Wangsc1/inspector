@@ -12,7 +12,7 @@ https://raw.githubusercontent.com/Wangsc1/inspector/main/netdebug.user.js
 ```
 
 ## 使用
-- 页面加载后右下角出现 Eruda 齿轮图标，点它打开面板。
+- 页面加载后自动展开完整开发者工具面板；收起后右下角会留下 Eruda 齿轮图标，点它可再次打开。
 - 也可在 Safari 扩展弹窗菜单中点“打开开发者工具”直接展开面板。
 - 默认匹配所有网站，如只需调试特定站点，请修改 `@match`。
 
