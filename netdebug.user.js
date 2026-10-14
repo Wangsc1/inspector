@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.5.1
+// @version      2.6.0
 // @description  在 Safari 页面中启用完整开发者工具：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -339,6 +339,18 @@
           document.addEventListener('__nd_cookie_deep_res', h);
           document.dispatchEvent(new CustomEvent('__nd_cookie_deep_req'));
           setTimeout(function () { if (!done) { document.removeEventListener('__nd_cookie_deep_res', h); flash('深度诊断无响应'); } }, 40000); 
+        }));
+        tools.appendChild(btn('在 App 读取全部 Cookie', function () {
+          // 会话类/HttpOnly Cookie 在 Safari 脚本里读不到；跳到 Scripting 的 Cookie Reader，在 App 内 WebView 登录后读取
+          var u = location.href;
+          var link = 'scripting://run/' + 'CookieReader' + '?url=' + encodeURIComponent(u);
+          flash('正在跳转到 Scripting 的「CookieReader」（需先安装该脚本，脚本名必须是 CookieReader）。若没反应，点下方链接。');
+          var a = mk('a', 'display:block;margin:8px 0;color:#0a58ca;word-break:break-all;font-size:12px', link);
+          a.href = link;
+          list.innerHTML = '';
+          list.appendChild(a);
+          list.appendChild(mk('div', 'color:#666;font-size:12px;margin-top:6px', '提示：App 里的 WebView 与 Safari 的登录状态相互独立，需要在 WebView 里重新登录一次。'));
+          try { location.href = link; } catch (e) {}
         }));
         tools.appendChild(btn('手动复制框', function () { manual(cur.map(function (c) { return c.name + '=' + c.value; }).join('; ')); }));
         root.appendChild(tools); root.appendChild(msg); root.appendChild(list);
