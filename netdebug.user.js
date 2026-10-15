@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         开发者工具 (Eruda)
 // @namespace    openbear.netdebug
-// @version      2.9.3
+// @version      2.9.4
 // @description  Safari 轻量开发者工具（不等同 Chrome DevTools）：Elements / Console / Network / Resources / Sources / Info / Snippets
 // @match        *://*/*
 // @run-at       document-start
@@ -313,7 +313,7 @@
     if (inited) return;
     if (document.getElementById('eruda')) { inited = true; return; }
     de.removeAttribute('data-nd-err');
-    inPage('try{var nd_first=!localStorage.getItem("eruda-entry-button");window.eruda.init({autoScale:true});(' + cookiePlugin.toString() + ')();if(nd_first){var nd_b=document.getElementById("eruda").shadowRoot.querySelector(".eruda-entry-btn");var nd_s=(nd_b&&nd_b.offsetWidth||40);window.eruda.position({x:12,y:window.innerHeight-nd_s-12});}}catch(e){document.documentElement.setAttribute("data-nd-err",String(e));}');
+    inPage('try{var nd_first=!localStorage.getItem("eruda-entry-button");window.eruda.init({autoScale:true});(' + cookiePlugin.toString() + ')();var nd_c=document.getElementById("eruda").shadowRoot.querySelector(\".luna-tab-item[data-id=cookies]\"),nd_k=document.getElementById("eruda").shadowRoot.querySelector(\".luna-tab-item[data-id=console]\");if(nd_c&&nd_k&&nd_k.parentNode)nd_k.parentNode.insertBefore(nd_c,nd_k);if(nd_first){var nd_b=document.getElementById("eruda").shadowRoot.querySelector(".eruda-entry-btn");var nd_s=(nd_b&&nd_b.offsetWidth||40);window.eruda.position({x:12,y:window.innerHeight-nd_s-12});}}catch(e){document.documentElement.setAttribute("data-nd-err",String(e));}');
     var err = de.getAttribute('data-nd-err');
     if (err) { toast('开发者工具启动失败: ' + err); return; }
     if (!document.getElementById('eruda')) toast('开发者工具未能显示（页面 CSP 可能拦截了内联脚本）');

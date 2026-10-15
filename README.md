@@ -68,3 +68,6 @@ Cookie 值展示与复制可能暴露登录状态；只在可信站点调试，�
 
 ### Safari 2.9.3
 - 移除 Cookies 页签中的「App内操作」按钮。
+
+### Safari 2.9.4
+- Cookies 页签移到 Console 左边；Console 仍是默认打开页签。
